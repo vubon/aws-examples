@@ -7,10 +7,14 @@ import (
 	"github.com/aws/aws-sdk-go/service/sqs"
 )
 
-func GetQueueURL(sess *session.Session, queue string) (*sqs.GetQueueUrlOutput, error) {
-	// snippet-start:[sqs.go.receive_messages.queue_url]
-	svc := sqs.New(sess)
+const QueueName = "<Your SQS Name>"
 
+var (
+	svc      *sqs.SQS
+	queueURL *string
+)
+
+func GetQueueURL(queue string) (*sqs.GetQueueUrlOutput, error) {
 	urlResult, err := svc.GetQueueUrl(&sqs.GetQueueUrlInput{
 		QueueName: &queue,
 	})
@@ -22,41 +26,44 @@ func GetQueueURL(sess *session.Session, queue string) (*sqs.GetQueueUrlOutput, e
 	return urlResult, nil
 }
 
-func GetMessages(sess *session.Session, queueURL *string, timeout int64) (*sqs.ReceiveMessageOutput, error) {
-	// Create an SQS service client
-	svc := sqs.New(sess)
+func pullMessages(chn chan<- *sqs.Message) {
+	for {
+		output, err := svc.ReceiveMessage(&sqs.ReceiveMessageInput{
+			AttributeNames: []*string{
+				aws.String(sqs.MessageSystemAttributeNameSentTimestamp),
+			},
+			MessageAttributeNames: []*string{
+				aws.String(sqs.QueueAttributeNameAll),
+			},
+			QueueUrl:            queueURL,
+			MaxNumberOfMessages: aws.Int64(2),
+			WaitTimeSeconds:     aws.Int64(15),
+		})
 
-	// snippet-start:[sqs.go.receive_messages.call]
-	msgResult, err := svc.ReceiveMessage(&sqs.ReceiveMessageInput{
-		AttributeNames: []*string{
-			aws.String(sqs.MessageSystemAttributeNameSentTimestamp),
-		},
-		MessageAttributeNames: []*string{
-			aws.String(sqs.QueueAttributeNameAll),
-		},
-		QueueUrl:            queueURL,
-		MaxNumberOfMessages: aws.Int64(1),
-		VisibilityTimeout:   &timeout,
-	})
-	// snippet-end:[sqs.go.receive_messages.call]
-	if err != nil {
-		return nil, err
+		if err != nil {
+			fmt.Printf("failed to fetch sqs message %v\n", err)
+		}
+
+		for _, message := range output.Messages {
+			chn <- message
+		}
+
 	}
-
-	return msgResult, nil
 }
 
-func DeleteMessage(sess *session.Session, queueURL *string, rh *string) error {
-	// Create an SQS service client
-	svc := sqs.New(sess)
+func DeleteMessage(msg *sqs.Message) {
 	_, err := svc.DeleteMessage(&sqs.DeleteMessageInput{
 		QueueUrl:      queueURL,
-		ReceiptHandle: rh,
+		ReceiptHandle: msg.ReceiptHandle,
 	})
 	if err != nil {
-		return err
+		fmt.Println("Delete error", err)
 	}
-	return nil
+}
+
+func MessageHandler(msg *sqs.Message) {
+	fmt.Println("RECEIVING MESSAGE >>> ")
+	fmt.Println(*msg.Body)
 }
 
 func SQS() {
@@ -65,32 +72,21 @@ func SQS() {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
 	}))
+	// Create an SQS service client
+	svc = sqs.New(sess)
 
 	// Get URL of queue
-	urlResult, err := GetQueueURL(sess, "sqswiths3")
+	urlResult, err := GetQueueURL(QueueName)
 	if err != nil {
-		fmt.Println("Got an error getting the queue URL:")
-		fmt.Println(err)
-		return
+		fmt.Println("Got an error getting the queue URL:", err)
 	}
-	// snippet-start:[sqs.go.receive_message.url]
-	queueURL := urlResult.QueueUrl
-	// snippet-end:[sqs.go.receive_message.url]
+	queueURL = urlResult.QueueUrl
 
-	msgResult, err := GetMessages(sess, queueURL, 5)
-	if err != nil {
-		fmt.Println("Got an error receiving messages:")
-		fmt.Println(err)
-		return
+	chnMessages := make(chan *sqs.Message, 2)
+	go pullMessages(chnMessages)
+
+	for message := range chnMessages {
+		MessageHandler(message)
+		DeleteMessage(message)
 	}
-
-	fmt.Println("Message ", msgResult)
-	if len(msgResult.Messages) != 0 {
-		// Delete Received Message from SQS
-		err = DeleteMessage(sess, queueURL, msgResult.Messages[0].ReceiptHandle)
-		if err != nil {
-			fmt.Println(err)
-		}
-	}
-
 }

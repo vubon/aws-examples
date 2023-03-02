@@ -1,4 +1,4 @@
-package main
+package sqs
 
 import (
 	"fmt"
@@ -49,14 +49,13 @@ func GetMessages(sess *session.Session, queueURL *string, timeout int64) (*sqs.R
 func DeleteMessage(sess *session.Session, queueURL *string, rh *string) error {
 	// Create an SQS service client
 	svc := sqs.New(sess)
-	message, err := svc.DeleteMessage(&sqs.DeleteMessageInput{
+	_, err := svc.DeleteMessage(&sqs.DeleteMessageInput{
 		QueueUrl:      queueURL,
 		ReceiptHandle: rh,
 	})
 	if err != nil {
 		return err
 	}
-	fmt.Println(message)
 	return nil
 }
 
@@ -85,7 +84,7 @@ func SQS() {
 		return
 	}
 
-	fmt.Println("Message ID:     ", msgResult)
+	fmt.Println("Message ", msgResult)
 	if len(msgResult.Messages) != 0 {
 		// Delete Received Message from SQS
 		err = DeleteMessage(sess, queueURL, msgResult.Messages[0].ReceiptHandle)

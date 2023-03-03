@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 
@@ -9,7 +10,14 @@ import (
 
 func main() {
 	mux := http.NewServeMux()
-	go sqs.SQS()
+	go func() {
+		defer func() {
+			if err := recover(); err != nil {
+				fmt.Println("SQS recover from panic attack ", err)
+			}
+		}()
+		sqs.SQS()
+	}()
 	err := http.ListenAndServe(":8080", mux)
 	if err != nil {
 		os.Exit(1)

@@ -83,7 +83,14 @@ func SQS() {
 	queueURL = urlResult.QueueUrl
 
 	chnMessages := make(chan *sqs.Message, 2)
-	go pullMessages(chnMessages)
+	go func() {
+		defer func() {
+			if err := recover(); err != nil {
+				fmt.Println("Recover from second layer of concurrency", err)
+			}
+		}()
+		pullMessages(chnMessages)
+	}()
 
 	for message := range chnMessages {
 		MessageHandler(message)

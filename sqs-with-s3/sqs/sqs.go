@@ -1,10 +1,13 @@
 package sqs
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sqs"
+	"github.com/vubon/aws-examples/sqs-with-s3/s3"
+	"time"
 )
 
 const QueueName = "<Your SQS Name>"
@@ -12,7 +15,45 @@ const QueueName = "<Your SQS Name>"
 var (
 	svc      *sqs.SQS
 	queueURL *string
+	sess     *session.Session
 )
+
+type Response struct {
+	Records []struct {
+		EventVersion string    `json:"eventVersion"`
+		EventSource  string    `json:"eventSource"`
+		AwsRegion    string    `json:"awsRegion"`
+		EventTime    time.Time `json:"eventTime"`
+		EventName    string    `json:"eventName"`
+		UserIdentity struct {
+			PrincipalId string `json:"principalId"`
+		} `json:"userIdentity"`
+		RequestParameters struct {
+			SourceIPAddress string `json:"sourceIPAddress"`
+		} `json:"requestParameters"`
+		ResponseElements struct {
+			XAmzRequestId string `json:"x-amz-request-id"`
+			XAmzId2       string `json:"x-amz-id-2"`
+		} `json:"responseElements"`
+		S3 struct {
+			S3SchemaVersion string `json:"s3SchemaVersion"`
+			ConfigurationId string `json:"configurationId"`
+			Bucket          struct {
+				Name          string `json:"name"`
+				OwnerIdentity struct {
+					PrincipalId string `json:"principalId"`
+				} `json:"ownerIdentity"`
+				Arn string `json:"arn"`
+			} `json:"bucket"`
+			Object struct {
+				Key       string `json:"key"`
+				Size      int    `json:"size"`
+				ETag      string `json:"eTag"`
+				Sequencer string `json:"sequencer"`
+			} `json:"object"`
+		} `json:"s3"`
+	} `json:"Records"`
+}
 
 func GetQueueURL(queue string) (*sqs.GetQueueUrlOutput, error) {
 	urlResult, err := svc.GetQueueUrl(&sqs.GetQueueUrlInput{
@@ -59,17 +100,32 @@ func DeleteMessage(msg *sqs.Message) {
 	if err != nil {
 		fmt.Println("Delete error", err)
 	}
+	fmt.Println("Delete Queue message: ", msg.MessageId)
 }
 
 func MessageHandler(msg *sqs.Message) {
 	fmt.Println("RECEIVING MESSAGE >>> ")
-	fmt.Println(*msg.Body)
+	//fmt.Println(*msg.Body)
+	var resp Response
+	errJSON := json.Unmarshal([]byte(*msg.Body), &resp)
+	if errJSON != nil {
+		fmt.Println("JSON Unmarshal error", errJSON)
+	}
+	bucketName := resp.Records[0].S3.Bucket.Name
+	fileName := resp.Records[0].S3.Object.Key
+	fmt.Println("Bucket name:  ", bucketName, "File Name: ", fileName)
+	err := s3.DownloadObject(sess, fileName, bucketName)
+	if err != nil {
+		fmt.Println("Got error ", err)
+	}
+	// If everything is okay, then delete the Queue message.
+	DeleteMessage(msg)
 }
 
 func SQS() {
 	// Create a session that gets credential values from ~/.aws/credentials
 	// and the default region from ~/.aws/config
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
+	sess = session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
 	}))
 	// Create an SQS service client
@@ -94,6 +150,5 @@ func SQS() {
 
 	for message := range chnMessages {
 		MessageHandler(message)
-		DeleteMessage(message)
 	}
 }
